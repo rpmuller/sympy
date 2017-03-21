@@ -7,6 +7,8 @@ from sympy.core.sympify import CantSympify
 from sympy.polys.polyutils import PicklableWithSlots
 from sympy.polys.polyerrors import CoercionFailed, NotReversible
 
+from sympy import oo
+
 class GenericPoly(PicklableWithSlots):
     """Base class for low-level polynomial representations. """
 
@@ -97,6 +99,7 @@ from sympy.polys.densetools import (
     dmp_compose,
     dup_decompose,
     dup_shift,
+    dup_transform,
     dmp_lift)
 
 from sympy.polys.euclidtools import (
@@ -504,12 +507,31 @@ class DMP(PicklableWithSlots, CantSympify):
 
     def total_degree(f):
         """Returns the total degree of ``f``. """
-        return max([sum(m) for m in f.monoms()])
+        return max(sum(m) for m in f.monoms())
+
+    def homogenize(f, s):
+        """Return homogeneous polynomial of ``f``"""
+        td = f.total_degree()
+        result = {}
+        new_symbol = (s == len(f.terms()[0][0]))
+        for term in f.terms():
+            d = sum(term[0])
+            if d < td:
+                i = td - d
+            else:
+                i = 0
+            if new_symbol:
+                result[term[0] + (i,)] = term[1]
+            else:
+                l = list(term[0])
+                l[s] += i
+                result[tuple(l)] = term[1]
+        return DMP(result, f.dom, f.lev + int(new_symbol), f.ring)
 
     def homogeneous_order(f):
         """Returns the homogeneous order of ``f``. """
         if f.is_zero:
-            return -1
+            return -oo
 
         monoms = f.monoms()
         tdeg = sum(monoms[0])
@@ -697,6 +719,20 @@ class DMP(PicklableWithSlots, CantSympify):
         """Efficiently compute Taylor shift ``f(x + a)``. """
         if not f.lev:
             return f.per(dup_shift(f.rep, f.dom.convert(a), f.dom))
+        else:
+            raise ValueError('univariate polynomial expected')
+
+    def transform(f, p, q):
+        """Evaluate functional transformation ``q**n * f(p/q)``."""
+        if f.lev:
+            raise ValueError('univariate polynomial expected')
+
+        lev, dom, per, P, Q = p.unify(q)
+        lev, dom, per, F, P = f.unify(per(P, dom, lev))
+        lev, dom, per, F, Q = per(F, dom, lev).unify(per(Q, dom, lev))
+
+        if not lev:
+            return per(dup_transform(F, P, Q, dom))
         else:
             raise ValueError('univariate polynomial expected')
 

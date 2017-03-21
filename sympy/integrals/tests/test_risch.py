@@ -1,6 +1,6 @@
 """Most of these tests come from the examples in Bronstein's book."""
 from sympy import (Poly, I, S, Function, log, symbols, exp, tan, sqrt,
-    Symbol, Lambda, sin, cos, Eq, Piecewise, factor)
+    Symbol, Lambda, sin, Eq, Piecewise, factor)
 from sympy.integrals.risch import (gcdex_diophantine, frac_in, as_poly_1t,
     derivation, splitfactor, splitfactor_sqf, canonical_representation,
     hermite_reduce, polynomial_reduce, residue_reduce, residue_reduce_to_basic,
@@ -42,6 +42,7 @@ def test_as_poly_1t():
         Poly(2/(exp(2) + 1)*z, t, z), Poly(2/(exp(2) + 1)*z, z, t)]
     assert as_poly_1t(2/((exp(2) + 1)*t) + t, t, z) in [
         Poly(t + 2/(exp(2) + 1)*z, t, z), Poly(t + 2/(exp(2) + 1)*z, z, t)]
+    assert as_poly_1t(S(0), t, z) == Poly(0, t, z)
 
 
 def test_derivation():
@@ -187,10 +188,13 @@ def test_recognize_log_derivative():
     assert recognize_log_derivative(a, d, DE, z) == True
     DE = DifferentialExtension(extension={'D': [Poly(1, x), Poly(1/x, t)]})
     assert recognize_log_derivative(Poly(t + 1, t), Poly(t + x, t), DE) == True
-    assert recognize_log_derivative(Poly(2, t), Poly(t**2 - 1), DE) == True
-    DE = DifferentialExtension(extension={'D': [Poly(1, x), Poly(1, t)]})
-    assert recognize_log_derivative(Poly(1, t), Poly(t**2 - 2), DE) == False
-    assert recognize_log_derivative(Poly(1, t), Poly(t**2 + t), DE) == True
+    assert recognize_log_derivative(Poly(2, t), Poly(t**2 - 1, t), DE) == True
+    DE = DifferentialExtension(extension={'D': [Poly(1, x)]})
+    assert recognize_log_derivative(Poly(1, x), Poly(x**2 - 2, x), DE) == False
+    assert recognize_log_derivative(Poly(1, x), Poly(x**2 + x, x), DE) == True
+    DE = DifferentialExtension(extension={'D': [Poly(1, x), Poly(t**2 + 1, t)]})
+    assert recognize_log_derivative(Poly(1, t), Poly(t**2 - 2, t), DE) == False
+    assert recognize_log_derivative(Poly(1, t), Poly(t**2 + t, t), DE) == False
 
 
 def test_residue_reduce():
@@ -230,7 +234,6 @@ def test_integrate_hyperexponential():
         Poly(t*(1 + t1**2), t)], 'Tfuncs': [tan, Lambda(i, exp(tan(i)))]})
     assert integrate_hyperexponential(a, d, DE) == \
         (exp(2*tan(x))*tan(x) + exp(tan(x)), 1 + t1**2, True)
-        # exp(2*tan(x))*tan(x) + tan(x) + exp(tan(x))
     a = Poly((t1**3 + (x + 1)*t1**2 + t1 + x + 2)*t, t)
     assert integrate_hyperexponential(a, d, DE) == \
         ((x + tan(x))*exp(tan(x)), 0, True)
@@ -250,7 +253,6 @@ def test_integrate_hyperexponential():
     d = Poly(25*t**6 + 35*t**4 + 11*t**2 + 1, t)
     assert integrate_hyperexponential(a, d, DE) == \
         (-(11 - 10*exp(x))/(5 + 25*exp(2*x)) + log(1 + exp(2*x)), -1, True)
-        # -(55 - 50*exp(x))/(25 + 125*exp(2*x)) - x + log(1 + exp(2*x))
     DE = DifferentialExtension(extension={'D': [Poly(1, x), Poly(t0, t0), Poly(t0*t, t)],
         'Tfuncs': [exp, Lambda(i, exp(exp(i)))]})
     assert integrate_hyperexponential(Poly(2*t0*t**2, t), Poly(1, t), DE) == (exp(2*exp(x)), 0, True)
@@ -317,6 +319,10 @@ def test_integrate_hyperexponential_polynomial():
         Poly((x - t0)*t1**2 + (-2*t0 + 2*x)*t1, t1), Poly(-2*x*t0 + x**2 +
         t0**2, t1), True)
 
+    DE = DifferentialExtension(extension={'D':[Poly(1, x), Poly(t0, t0)]})
+    assert integrate_hyperexponential_polynomial(Poly(0, t0), DE, z) == (
+        Poly(0, t0), Poly(1, t0), True)
+
 
 def test_integrate_hyperexponential_returns_piecewise():
     a, b = symbols('a b')
@@ -336,13 +342,20 @@ def test_integrate_hyperexponential_returns_piecewise():
     assert integrate_hyperexponential(DE.fa, DE.fd, DE) == (Piecewise(
         (x**3/3, Eq(a**6, 0)),
         ((x**2*a**5 - 2*x*a**4 + 2*a**3)*exp(a*x)/a**6, True)), 0, True)
-
+    DE = DifferentialExtension(x**y + z, y)
+    assert integrate_hyperexponential(DE.fa, DE.fd, DE) == (Piecewise((y,
+        Eq(log(x), 0)), (exp(log(x)*y)/log(x), True)), z, True)
+    DE = DifferentialExtension(x**y + z + x**(2*y), y)
+    assert integrate_hyperexponential(DE.fa, DE.fd, DE) == (Piecewise((2*y,
+        Eq(2*log(x)**2, 0)), ((exp(2*log(x)*y)*log(x) +
+            2*exp(log(x)*y)*log(x))/(2*log(x)**2), True)), z, True)
+    # TODO: Add a test where two different parts of the extension use a
+    # Piecewise, like y**x + z**x.
 
 def test_integrate_primitive():
     DE = DifferentialExtension(extension={'D': [Poly(1, x), Poly(1/x, t)],
         'Tfuncs': [log]})
     assert integrate_primitive(Poly(t, t), Poly(1, t), DE) == (x*log(x), -1, True)
-    # (x*log(x) - x, True)
     assert integrate_primitive(Poly(x, t), Poly(t, t), DE) == (0, NonElementaryIntegral(x/log(x), x), False)
 
     DE = DifferentialExtension(extension={'D': [Poly(1, x), Poly(1/x, t1), Poly(1/(x + 1), t2)],
@@ -448,9 +461,11 @@ def test_DifferentialExtension_log():
 
 
 def test_DifferentialExtension_symlog():
+    # See comment on test_risch_integrate below
     assert DifferentialExtension(log(x**x), x, dummy=False)._important_attrs == \
-        (Poly(x*t0, t0), Poly(1, t0), [Poly(1, x), Poly(1/x, t0)], [x, t0],
-        [Lambda(i, log(i))], [(x*log(x), log(x**x))], [], [], [1], [x])
+        (Poly(t0*x, t1), Poly(1, t1), [Poly(1, x), Poly(1/x, t0), Poly((t0 +
+            1)*t1, t1)], [x, t0, t1], [Lambda(i, log(i)), Lambda(i, exp(i*t0))],
+            [(exp(x*log(x)), x**x)], [2], [t0*x], [1], [x])
     assert DifferentialExtension(log(x**y), x, dummy=False)._important_attrs == \
         (Poly(y*t0, t0), Poly(1, t0), [Poly(1, x), Poly(1/x, t0)], [x, t0],
         [Lambda(i, log(i))], [(y*log(x), log(x**y))], [], [], [1], [x])
@@ -631,7 +646,14 @@ def test_risch_integrate():
     # These are tested here in addition to in test_DifferentialExtension above
     # (symlogs) to test that backsubs works correctly.  The integrals should be
     # written in terms of the original logarithms in the integrands.
-    assert risch_integrate(log(x**x), x) == x*log(x**x)/2 - x**2/4
+
+    # XXX: Unfortunately, making backsubs work on this one is a little
+    # trickier, because x**x is converted to exp(x*log(x)), and so log(x**x)
+    # is converted to x*log(x). (x**2*log(x)).subs(x*log(x), log(x**x)) is
+    # smart enough, the issue is that these splits happen at different places
+    # in the algorithm.  Maybe a heuristic is in order
+    assert risch_integrate(log(x**x), x) == x**2*log(x)/2 - x**2/4
+
     assert risch_integrate(log(x**y), x) == x*log(x**y) - x*y
     assert risch_integrate(log(sqrt(x)), x) == x*log(sqrt(x)) - x/2
 
@@ -645,3 +667,8 @@ def test_NonElementaryIntegral():
     assert isinstance(risch_integrate(x**x*log(x), x), NonElementaryIntegral)
     # Make sure methods of Integral still give back a NonElementaryIntegral
     assert isinstance(NonElementaryIntegral(x**x*t0, x).subs(t0, log(x)), NonElementaryIntegral)
+
+def test_xtothex():
+    a = risch_integrate(x**x, x)
+    assert a == NonElementaryIntegral(x**x, x)
+    assert isinstance(a, NonElementaryIntegral)

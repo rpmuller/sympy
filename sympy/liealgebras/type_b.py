@@ -1,21 +1,22 @@
 from __future__ import print_function, division
 
-from sympy.core import Set, Dict, Tuple
 from .cartan_type import Standard_Cartan
+from sympy.core.compatibility import range
 from sympy.matrices import eye
 
 class TypeB(Standard_Cartan):
 
-    def __init__(self, n):
-        assert n >= 2
-        Standard_Cartan.__init__(self, "B", n)
+    def __new__(cls, n):
+        if n < 2:
+            raise ValueError("n can not be less than 2")
+        return Standard_Cartan.__new__(cls, "B", n)
 
     def dimension(self):
-        """
-        Return the dimension of the vector space
-        V underlying the Lie algebra
-        Example
+        """Dimension of the vector space V underlying the Lie algebra
+
+        Examples
         ========
+
         >>> from sympy.liealgebras.cartan_type import CartanType
         >>> c = CartanType("B3")
         >>> c.dimension()
@@ -38,9 +39,26 @@ class TypeB(Standard_Cartan):
 
     def simple_root(self, i):
         """
-        Returns the ith simple root for the B series
-        Example
+        Every lie algebra has a unique root system.
+        Given a root system Q, there is a subset of the
+        roots such that an element of Q is called a
+        simple root if it cannot be written as the sum
+        of two elements in Q.  If we let D denote the
+        set of simple roots, then it is clear that every
+        element of Q can be written as a linear combination
+        of elements of D with all coefficients non-negative.
+
+        In B_n the first n-1 simple roots are the same as the
+        roots in A_(n-1) (a 1 in the ith position, a -1 in
+        the (i+1)th position, and zeroes elsewhere).  The n-th
+        simple root is the root with a 1 in the nth position
+        and zeroes elsewhere.
+
+        This method returns the ith simple root for the B series.
+
+        Examples
         ========
+
         >>> from sympy.liealgebras.cartan_type import CartanType
         >>> c = CartanType("B3")
         >>> c.simple_root(2)
@@ -54,6 +72,43 @@ class TypeB(Standard_Cartan):
             root = [0]*self.n
             root[n-1] = 1
             return root
+
+    def positive_roots(self):
+        """
+        This method generates all the positive roots of
+        A_n.  This is half of all of the roots of B_n;
+        by multiplying all the positive roots by -1 we
+        get the negative roots.
+
+        Examples
+        ========
+
+        >>> from sympy.liealgebras.cartan_type import CartanType
+        >>> c = CartanType("A3")
+        >>> c.positive_roots()
+        {1: [1, -1, 0, 0], 2: [1, 0, -1, 0], 3: [1, 0, 0, -1], 4: [0, 1, -1, 0],
+                5: [0, 1, 0, -1], 6: [0, 0, 1, -1]}
+        """
+
+        n = self.n
+        posroots = {}
+        k = 0
+        for i in range(0, n-1):
+            for j in range(i+1, n):
+               k += 1
+               posroots[k] = self.basic_root(i, j)
+               k += 1
+               root = self.basic_root(i, j)
+               root[j] = 1
+               posroots[k] = root
+
+        for i in range(0, n):
+            k += 1
+            root = [0]*n
+            root[i] = 1
+            posroots[k] = root
+
+        return posroots
 
     def roots(self):
         """
@@ -71,8 +126,9 @@ class TypeB(Standard_Cartan):
         roots, (alpha[1], ...., alpha[l]).  Then the ijth
         entry of the Cartan matrix is (<alpha[i],alpha[j]>).
 
-        Example
-        =======
+        Examples
+        ========
+
         >>> from sympy.liealgebras.cartan_type import CartanType
         >>> c = CartanType('B4')
         >>> c.cartan_matrix()
@@ -111,3 +167,9 @@ class TypeB(Standard_Cartan):
 
         n = self.n
         return "so(" + str(2*n) + ")"
+
+    def dynkin_diagram(self):
+        n = self.n
+        diag = "---".join("0" for i in range(1, n)) + "=>=0\n"
+        diag += "   ".join(str(i) for i in range(1, n+1))
+        return diag

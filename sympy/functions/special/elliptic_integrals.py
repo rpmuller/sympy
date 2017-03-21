@@ -15,23 +15,25 @@ class elliptic_k(Function):
     r"""
     The complete elliptic integral of the first kind, defined by
 
-    .. math:: K(z) = F\left(\tfrac{\pi}{2}\middle| z\right)
+    .. math:: K(m) = F\left(\tfrac{\pi}{2}\middle| m\right)
 
     where `F\left(z\middle| m\right)` is the Legendre incomplete
     elliptic integral of the first kind.
 
-    The function `K(z)` is a single-valued function on the complex
+    The function `K(m)` is a single-valued function on the complex
     plane with branch cut along the interval `(1, \infty)`.
 
     Examples
     ========
 
     >>> from sympy import elliptic_k, I, pi
-    >>> from sympy.abc import z
+    >>> from sympy.abc import m
     >>> elliptic_k(0)
     pi/2
     >>> elliptic_k(1.0 + I)
     1.50923695405127 + 0.625146415202697*I
+    >>> elliptic_k(m).series(n=3)
+    pi/2 + pi*m/8 + 9*pi*m**2/128 + O(m**3)
 
     References
     ==========
@@ -45,36 +47,42 @@ class elliptic_k(Function):
     elliptic_f
     """
 
-    nargs = 1
-
     @classmethod
-    def eval(cls, z):
-        if z is S.Zero:
+    def eval(cls, m):
+        if m is S.Zero:
             return pi/2
-        elif z is S.Half:
+        elif m is S.Half:
             return 8*pi**(S(3)/2)/gamma(-S(1)/4)**2
-        elif z is S.One:
+        elif m is S.One:
             return S.ComplexInfinity
-        elif z is S.NegativeOne:
+        elif m is S.NegativeOne:
             return gamma(S(1)/4)**2/(4*sqrt(2*pi))
-        elif z in (S.Infinity, S.NegativeInfinity, I*S.Infinity,
+        elif m in (S.Infinity, S.NegativeInfinity, I*S.Infinity,
                    I*S.NegativeInfinity, S.ComplexInfinity):
             return S.Zero
 
     def fdiff(self, argindex=1):
-        z = self.args[0]
-        return (elliptic_e(z) - (1 - z)*elliptic_k(z))/(2*z*(1 - z))
+        m = self.args[0]
+        return (elliptic_e(m) - (1 - m)*elliptic_k(m))/(2*m*(1 - m))
 
     def _eval_conjugate(self):
-        z = self.args[0]
-        if (z.is_real and (z - 1).is_positive) is False:
-            return self.func(z.conjugate())
+        m = self.args[0]
+        if (m.is_real and (m - 1).is_positive) is False:
+            return self.func(m.conjugate())
 
-    def _eval_rewrite_as_hyper(self, z):
-        return (pi/2)*hyper((S.Half, S.Half), (S.One,), z)
+    def _eval_nseries(self, x, n, logx):
+        from sympy.simplify import hyperexpand
+        return hyperexpand(self.rewrite(hyper)._eval_nseries(x, n=n, logx=logx))
 
-    def _eval_rewrite_as_meijerg(self, z):
-        return meijerg(((S.Half, S.Half), []), ((S.Zero,), (S.Zero,)), -z)/2
+    def _eval_rewrite_as_hyper(self, m):
+        return (pi/2)*hyper((S.Half, S.Half), (S.One,), m)
+
+    def _eval_rewrite_as_meijerg(self, m):
+        return meijerg(((S.Half, S.Half), []), ((S.Zero,), (S.Zero,)), -m)/2
+
+    def _sage_(self):
+        import sage.all as sage
+        return sage.elliptic_kc(self.args[0]._sage_())
 
 
 class elliptic_f(Function):
@@ -109,8 +117,6 @@ class elliptic_f(Function):
 
     elliptic_k
     """
-
-    nargs = 2
 
     @classmethod
     def eval(cls, z, m):
@@ -149,12 +155,12 @@ class elliptic_e(Function):
 
     .. math:: E\left(z\middle| m\right) = \int_0^z \sqrt{1 - m \sin^2 t} dt
 
-    Called with a single argument `z`, evaluates the Legendre complete
+    Called with a single argument `m`, evaluates the Legendre complete
     elliptic integral of the second kind
 
-    .. math:: E(z) = E\left(\tfrac{\pi}{2}\middle| z\right)
+    .. math:: E(m) = E\left(\tfrac{\pi}{2}\middle| m\right)
 
-    The function `E(z)` is a single-valued function on the complex
+    The function `E(m)` is a single-valued function on the complex
     plane with branch cut along the interval `(1, \infty)`.
 
     Examples
@@ -164,6 +170,8 @@ class elliptic_e(Function):
     >>> from sympy.abc import z, m
     >>> elliptic_e(z, m).series(z)
     z + z**5*(-m**2/40 + m/30) - m*z**3/6 + O(z**6)
+    >>> elliptic_e(m).series(n=4)
+    pi/2 - pi*m/8 - 3*pi*m**2/128 - 5*pi*m**3/512 + O(m**4)
     >>> elliptic_e(1 + I, 2 - I/2).n()
     1.55203744279187 + 0.290764986058437*I
     >>> elliptic_e(0)
@@ -179,12 +187,10 @@ class elliptic_e(Function):
     .. [3] http://functions.wolfram.com/EllipticIntegrals/EllipticE
     """
 
-    nargs = (1, 2)
-
     @classmethod
-    def eval(cls, *args):
-        if len(args) == 2:
-            z, m = args
+    def eval(cls, m, z=None):
+        if z is not None:
+            z, m = m, z
             k = 2*z/pi
             if m.is_zero:
                 return z
@@ -197,16 +203,15 @@ class elliptic_e(Function):
             elif z.could_extract_minus_sign():
                 return -elliptic_e(-z, m)
         else:
-            z = args[0]
-            if z.is_zero:
+            if m.is_zero:
                 return pi/2
-            elif z is S.One:
+            elif m is S.One:
                 return S.One
-            elif z is S.Infinity:
+            elif m is S.Infinity:
                 return I*S.Infinity
-            elif z is S.NegativeInfinity:
+            elif m is S.NegativeInfinity:
                 return S.Infinity
-            elif z is S.ComplexInfinity:
+            elif m is S.ComplexInfinity:
                 return S.ComplexInfinity
 
     def fdiff(self, argindex=1):
@@ -217,26 +222,37 @@ class elliptic_e(Function):
             elif argindex == 2:
                 return (elliptic_e(z, m) - elliptic_f(z, m))/(2*m)
         else:
-            z = self.args[0]
+            m = self.args[0]
             if argindex == 1:
-                return (elliptic_e(z) - elliptic_k(z))/(2*z)
+                return (elliptic_e(m) - elliptic_k(m))/(2*m)
         raise ArgumentIndexError(self, argindex)
 
     def _eval_conjugate(self):
-        z, m = self.args
-        if (m.is_real and (m - 1).is_positive) is False:
-            return self.func(z.conjugate(), m.conjugate())
+        if len(self.args) == 2:
+            z, m = self.args
+            if (m.is_real and (m - 1).is_positive) is False:
+                return self.func(z.conjugate(), m.conjugate())
+        else:
+            m = self.args[0]
+            if (m.is_real and (m - 1).is_positive) is False:
+                return self.func(m.conjugate())
+
+    def _eval_nseries(self, x, n, logx):
+        from sympy.simplify import hyperexpand
+        if len(self.args) == 1:
+            return hyperexpand(self.rewrite(hyper)._eval_nseries(x, n=n, logx=logx))
+        return super(elliptic_e, self)._eval_nseries(x, n=n, logx=logx)
 
     def _eval_rewrite_as_hyper(self, *args):
         if len(args) == 1:
-            z = args[0]
-            return (pi/2)*hyper((-S.Half, S.Half), (S.One,), z)
+            m = args[0]
+            return (pi/2)*hyper((-S.Half, S.Half), (S.One,), m)
 
     def _eval_rewrite_as_meijerg(self, *args):
         if len(args) == 1:
-            z = args[0]
+            m = args[0]
             return -meijerg(((S.Half, S(3)/2), []), \
-                            ((S.Zero,), (S.Zero,)), -z)/4
+                            ((S.Zero,), (S.Zero,)), -m)/4
 
 
 class elliptic_pi(Function):
@@ -258,8 +274,8 @@ class elliptic_pi(Function):
 
     >>> from sympy import elliptic_pi, I, pi, O, S
     >>> from sympy.abc import z, n, m
-    >>> elliptic_pi(n, z, m).series(z)
-    z + z**3*(m/6 + n/3) + z**5*(3*m**2/40 + m*n/10 - m/30 + n**2/5 - n/15) + O(z**6)
+    >>> elliptic_pi(n, z, m).series(z, n=4)
+    z + z**3*(m/6 + n/3) + O(z**4)
     >>> elliptic_pi(0.5 + I, 1.0 - I, 1.2)
     2.50232379629182 - 0.760939574180767*I
     >>> elliptic_pi(0, 0)
@@ -275,12 +291,10 @@ class elliptic_pi(Function):
     .. [3] http://functions.wolfram.com/EllipticIntegrals/EllipticPi
     """
 
-    nargs = (2, 3)
-
     @classmethod
-    def eval(cls, *args):
-        if len(args) == 3:
-            n, z, m = args
+    def eval(cls, n, m, z=None):
+        if z is not None:
+            n, z, m = n, m, z
             k = 2*z/pi
             if n == S.Zero:
                 return elliptic_f(z, m)
@@ -302,7 +316,6 @@ class elliptic_pi(Function):
             elif z.could_extract_minus_sign():
                 return -elliptic_pi(n, -z, m)
         else:
-            n, m = args
             if n == S.Zero:
                 return elliptic_k(m)
             elif n == S.One:

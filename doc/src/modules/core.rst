@@ -9,6 +9,11 @@ sympify
 ^^^^^^^
 .. autofunction:: sympify
 
+assumptions
+-----------
+
+.. automodule:: sympy.core.assumptions
+
 cache
 -------
 .. module:: sympy.core.cache
@@ -31,10 +36,9 @@ Atom
 .. autoclass:: Atom
    :members:
 
-C
-^
-.. autoclass:: C
-   :members:
+core
+----
+.. module:: sympy.core.core
 
 singleton
 ---------
@@ -42,7 +46,7 @@ singleton
 
 S
 ^
-.. autoclass:: S
+.. autoclass:: sympy.core.singleton.SingletonRegistry
    :members:
 
 expr
@@ -52,6 +56,11 @@ expr
 Expr
 ----
 .. autoclass:: Expr
+   :members:
+
+UnevaluatedExpr
+---------------
+.. autoclass:: UnevaluatedExpr
    :members:
 
 AtomicExpr
@@ -120,11 +129,6 @@ RealNumber
 .. autoclass:: RealNumber
    :members:
 
-Real
-^^^^
-.. autoclass:: Real
-   :members:
-
 igcd
 ^^^^
 .. autofunction:: igcd
@@ -137,31 +141,89 @@ seterr
 ^^^^^^
 .. autofunction:: seterr
 
-E
-^
-.. autoclass:: E
+Zero
+^^^^
+
+.. autoclass:: Zero
    :members:
 
-I
-^
-.. autoclass:: I
+One
+^^^
+
+.. autoclass:: One
    :members:
 
-nan
+NegativeOne
+^^^^^^^^^^^
+
+.. autoclass:: NegativeOne
+   :members:
+
+Half
+^^^^
+
+.. autoclass:: Half
+   :members:
+
+NaN
 ^^^
-.. autofunction:: nan
 
-oo
+.. autoclass:: NaN
+   :members:
+
+Infinity
+^^^^^^^^
+
+.. autoclass:: Infinity
+   :members:
+
+NegativeInfinity
+^^^^^^^^^^^^^^^^
+
+.. autoclass:: NegativeInfinity
+   :members:
+
+ComplexInfinity
+^^^^^^^^^^^^^^^
+
+.. autoclass:: ComplexInfinity
+   :members:
+
+Exp1
+^^^^
+
+.. autoclass:: Exp1
+   :members:
+
+ImaginaryUnit
+^^^^^^^^^^^^^
+
+.. autoclass:: ImaginaryUnit
+   :members:
+
+Pi
 ^^
-.. autofunction:: oo
 
-pi
-^^
-.. autofunction:: pi
+.. autoclass:: Pi
+   :members:
 
-zoo
-^^^
-.. autofunction:: zoo
+EulerGamma
+^^^^^^^^^^
+
+.. autoclass:: EulerGamma
+   :members:
+
+Catalan
+^^^^^^^
+
+.. autoclass:: Catalan
+   :members:
+
+GoldenRatio
+^^^^^^^^^^^
+
+.. autoclass:: GoldenRatio
+   :members:
 
 power
 -----
@@ -335,14 +397,14 @@ Function
 
    >>> e = (f(x) + cos(x) + 2)
    >>> e.atoms(Function)
-   set([f(x), cos(x)])
+   {f(x), cos(x)}
 
    If you just want the function you defined, not SymPy functions, the
    thing to search for is AppliedUndef:
 
    >>> from sympy.core.function import AppliedUndef
    >>> e.atoms(AppliedUndef)
-   set([f(x)])
+   {f(x)}
 
 Subs
 ^^^^
@@ -409,8 +471,7 @@ PrecisionExhausted
 
 N
 ^
-.. autoclass:: N
-   :members:
+.. autofunction:: N
 
 containers
 ----------

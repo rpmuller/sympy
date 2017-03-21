@@ -1,6 +1,6 @@
 from __future__ import print_function, division
 
-from sympy.core import Basic, Symbol, Dict, Tuple
+from sympy.core import Basic
 
 
 class CartanType_generator(Basic):
@@ -12,6 +12,8 @@ class CartanType_generator(Basic):
         c = list(c)
 
         letter, n = c[0], int(c[1])
+        if n < 0:
+            raise ValueError("Lie algebra rank cannot be negative")
         if letter == "A":
             if n >= 0:
                 from . import type_a
@@ -54,9 +56,11 @@ class Standard_Cartan(Basic):
     Concrete base class for Cartan types such as A4, etc
     """
 
-    def __init__(self, series, n):
-        self.series = series
-        self.n = n
+    def __new__(cls, series, n):
+        obj = Basic.__new__(cls, series, n)
+        obj.n = n
+        obj.series = series
+        return obj
 
     def rank(self):
         """
@@ -64,7 +68,7 @@ class Standard_Cartan(Basic):
         """
         return self.n
 
-    def type(self):
+    def series(self):
         """
         Returns the type of the Lie algebra
         """

@@ -5,7 +5,8 @@ from __future__ import print_function, division
 from inspect import getmro
 
 from .core import all_classes as sympy_classes
-from .compatibility import iterable, string_types
+from .compatibility import iterable, string_types, range
+from .evaluate import global_evaluate
 
 
 class SympifyError(ValueError):
@@ -27,8 +28,8 @@ class CantSympify(object):
     """
     Mix in this trait to a class to disallow sympification of its instances.
 
-    Example
-    =======
+    Examples
+    ========
 
     >>> from sympy.core.sympify import sympify, CantSympify
 
@@ -49,9 +50,9 @@ class CantSympify(object):
     """
     pass
 
-def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
-    """
-    Converts an arbitrary expression to a type that can be used inside SymPy.
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False,
+        evaluate=None):
+    """Converts an arbitrary expression to a type that can be used inside SymPy.
 
     For example, it will convert Python ints into instance of sympy.Rational,
     floats into instances of sympy.Float, etc. It is also able to coerce symbolic
@@ -62,8 +63,12 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
        - any object defined in sympy
        - standard numeric python types: int, long, float, Decimal
        - strings (like "0.09" or "2e-19")
-       - booleans, including ``None`` (will leave them unchanged)
+       - booleans, including ``None`` (will leave ``None`` unchanged)
        - lists, sets or tuples containing any of the above
+
+    .. warning::
+        Note that this function uses ``eval``, and thus shouldn't be used on
+        unsanitized input.
 
     If the argument is already a type that SymPy understands, it will do
     nothing but return that value. This can be used at the beginning of a
@@ -96,7 +101,7 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
     The sympification happens with access to everything that is loaded
     by ``from sympy import *``; anything used in a string that is not
     defined by that import will be converted to a symbol. In the following,
-    the ``bitcout`` function is treated as a symbol and the ``O`` is
+    the ``bitcount`` function is treated as a symbol and the ``O`` is
     interpreted as the Order object (used with series) and it raises
     an error when used improperly:
 
@@ -139,8 +144,8 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
     >>> from sympy.abc import _clash1
     >>> _clash1
     {'C': C, 'E': E, 'I': I, 'N': N, 'O': O, 'Q': Q, 'S': S}
-    >>> sympify('C & Q', _clash1)
-    And(C, Q)
+    >>> sympify('I & Q', _clash1)
+    I & Q
 
     Strict
     ------
@@ -149,12 +154,27 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
     explicit conversion has been defined are converted. In the other
     cases, a SympifyError is raised.
 
-    >>> sympify(True)
-    True
-    >>> sympify(True, strict=True)
+    >>> print(sympify(None))
+    None
+    >>> sympify(None, strict=True)
     Traceback (most recent call last):
     ...
-    SympifyError: SympifyError: True
+    SympifyError: SympifyError: None
+
+    Evaluation
+    ----------
+
+    If the option ``evaluate`` is set to ``False``, then arithmetic and
+    operators will be converted into their SymPy equivalents and the
+    ``evaluate=False`` option will be added. Nested ``Add`` or ``Mul`` will
+    be denested first. This is done via an AST transformation that replaces
+    operators with their SymPy equivalents, so if an operand redefines any
+    of those operations, the redefined operators will not be used.
+
+    >>> sympify('2**2 / 3 + 5')
+    19/3
+    >>> sympify('2**2 / 3 + 5', evaluate=False)
+    2**2/3 + 5
 
     Extending
     ---------
@@ -168,7 +188,7 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
     ...     def __iter__(self):
     ...         yield 1
     ...         yield 2
-    ...         raise StopIteration
+    ...         return
     ...     def __getitem__(self, i): return list(self)[i]
     ...     def _sympy_(self): return Matrix(self)
     >>> sympify(MyList1())
@@ -185,7 +205,7 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
     ...     def __iter__(self):  #     Use _sympy_!
     ...         yield 1
     ...         yield 2
-    ...         raise StopIteration
+    ...         return
     ...     def __getitem__(self, i): return list(self)[i]
     >>> from sympy.core.sympify import converter
     >>> converter[MyList2] = lambda x: Matrix(x)
@@ -214,13 +234,23 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
     -2*(-(-x + 1/x)/(x*(x - 1/x)**2) - 1/(x*(x - 1/x))) - 1
 
     """
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError: # Type of a is unhashable
+        pass
     try:
         cls = a.__class__
     except AttributeError:  # a is probably an old-style class object
         cls = type(a)
     if cls in sympy_classes:
         return a
-    if cls in (bool, type(None)):
+    if cls is type(None):
         if strict:
             raise SympifyError(a)
         else:
@@ -277,11 +307,8 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
     # and try to parse it. If it fails, then we have no luck and
     # return an exception
     try:
-        import sys
-        if sys.version_info[0] >= 3:
-            a = str(a)
-        else:
-            a = unicode(a)
+        from .compatibility import unicode
+        a = unicode(a)
     except Exception as exc:
         raise SympifyError(a, exc)
 
@@ -299,7 +326,7 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False):
 
     try:
         a = a.replace('\n', '')
-        expr = parse_expr(a, local_dict=locals, transformations=transformations)
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
     except (TokenError, SyntaxError) as exc:
         raise SympifyError('could not parse %r' % a, exc)
 
@@ -357,7 +384,7 @@ def kernS(s):
     If use of the hack fails, the un-hacked string will be passed to sympify...
     and you get what you get.
 
-    XXX This hack should not be necessary once issue 1497 has been resolved.
+    XXX This hack should not be necessary once issue 4596 has been resolved.
     """
     import re
     from sympy.core.symbol import Symbol

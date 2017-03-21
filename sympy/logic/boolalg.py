@@ -1,15 +1,19 @@
-"""Boolean algebra module for SymPy"""
+"""
+Boolean algebra module for SymPy
+"""
 from __future__ import print_function, division
 
 from collections import defaultdict
-from itertools import product
+from itertools import combinations, product
 
 from sympy.core.basic import Basic
+from sympy.core.cache import cacheit
 from sympy.core.numbers import Number
-from sympy.core.decorators import deprecated
 from sympy.core.operations import LatticeOp
-from sympy.core.function import Application, sympify
-from sympy.core.compatibility import ordered, xrange
+from sympy.core.function import Application, Derivative
+from sympy.core.compatibility import ordered, range, with_metaclass, as_int
+from sympy.core.sympify import converter, _sympify, sympify
+from sympy.core.singleton import Singleton, S
 
 
 class Boolean(Basic):
@@ -21,9 +25,13 @@ class Boolean(Basic):
         """Overloading for & operator"""
         return And(self, other)
 
+    __rand__ = __and__
+
     def __or__(self, other):
         """Overloading for |"""
         return Or(self, other)
+
+    __ror__ = __or__
 
     def __invert__(self):
         """Overloading for ~"""
@@ -37,9 +45,232 @@ class Boolean(Basic):
         """Overloading for <<"""
         return Implies(other, self)
 
+    __rrshift__ = __lshift__
+    __rlshift__ = __rshift__
+
     def __xor__(self, other):
         return Xor(self, other)
 
+    __rxor__ = __xor__
+
+    def equals(self, other):
+        """
+        Returns True if the given formulas have the same truth table.
+        For two formulas to be equal they must have the same literals.
+
+        Examples
+        ========
+
+        >>> from sympy.abc import A, B, C
+        >>> from sympy.logic.boolalg import And, Or, Not
+        >>> (A >> B).equals(~B >> ~A)
+        True
+        >>> Not(And(A, B, C)).equals(And(Not(A), Not(B), Not(C)))
+        False
+        >>> Not(And(A, Not(A))).equals(Or(B, Not(B)))
+        False
+        """
+        from sympy.logic.inference import satisfiable
+        from sympy.core.relational import Relational
+
+        if self.has(Relational) or other.has(Relational):
+            raise NotImplementedError('handling of relationals')
+        return self.atoms() == other.atoms() and \
+                not satisfiable(Not(Equivalent(self, other)))
+
+
+class BooleanAtom(Boolean):
+    """
+    Base class of BooleanTrue and BooleanFalse.
+    """
+    is_Boolean = True
+    _op_priority = 11  # higher than Expr
+
+    @property
+    def canonical(self):
+        return self
+
+    def _noop(self, other=None):
+        raise TypeError('BooleanAtom not allowed in this context.')
+
+    __add__ = _noop
+    __radd__ = _noop
+    __sub__ = _noop
+    __rsub__ = _noop
+    __mul__ = _noop
+    __rmul__ = _noop
+    __pow__ = _noop
+    __rpow__ = _noop
+    __rdiv__ = _noop
+    __truediv__ = _noop
+    __div__ = _noop
+    __rtruediv__ = _noop
+    __mod__ = _noop
+    __rmod__ = _noop
+    _eval_power = _noop
+
+
+class BooleanTrue(with_metaclass(Singleton, BooleanAtom)):
+    """
+    SymPy version of True, a singleton that can be accessed via S.true.
+
+    This is the SymPy version of True, for use in the logic module. The
+    primary advantage of using true instead of True is that shorthand boolean
+    operations like ~ and >> will work as expected on this class, whereas with
+    True they act bitwise on 1. Functions in the logic module will return this
+    class when they evaluate to true.
+
+    Notes
+    =====
+
+    There is liable to be some confusion as to when ``True`` should
+    be used and when ``S.true`` should be used in various contexts
+    throughout SymPy. An important thing to remember is that
+    ``sympify(True)`` returns ``S.true``. This means that for the most
+    part, you can just use ``True`` and it will automatically be converted
+    to ``S.true`` when necessary, similar to how you can generally use 1
+    instead of ``S.One``.
+
+    The rule of thumb is:
+
+    "If the boolean in question can be replaced by an arbitrary symbolic
+    ``Boolean``, like ``Or(x, y)`` or ``x > 1``, use ``S.true``.
+    Otherwise, use ``True``"
+
+    In other words, use ``S.true`` only on those contexts where the
+    boolean is being used as a symbolic representation of truth.
+    For example, if the object ends up in the ``.args`` of any expression,
+    then it must necessarily be ``S.true`` instead of ``True``, as
+    elements of ``.args`` must be ``Basic``. On the other hand,
+    ``==`` is not a symbolic operation in SymPy, since it always returns
+    ``True`` or ``False``, and does so in terms of structural equality
+    rather than mathematical, so it should return ``True``. The assumptions
+    system should use ``True`` and ``False``. Aside from not satisfying
+    the above rule of thumb, the
+    assumptions system uses a three-valued logic (``True``, ``False``, ``None``),
+    whereas ``S.true`` and ``S.false`` represent a two-valued logic. When in
+    doubt, use ``True``.
+
+    "``S.true == True is True``."
+
+    While "``S.true is True``" is ``False``, "``S.true == True``"
+    is ``True``, so if there is any doubt over whether a function or
+    expression will return ``S.true`` or ``True``, just use ``==``
+    instead of ``is`` to do the comparison, and it will work in either
+    case.  Finally, for boolean flags, it's better to just use ``if x``
+    instead of ``if x is True``. To quote PEP 8:
+
+    Don't compare boolean values to ``True`` or ``False``
+    using ``==``.
+
+    * Yes:   ``if greeting:``
+    * No:    ``if greeting == True:``
+    * Worse: ``if greeting is True:``
+
+    Examples
+    ========
+
+    >>> from sympy import sympify, true, Or
+    >>> sympify(True)
+    True
+    >>> ~true
+    False
+    >>> ~True
+    -2
+    >>> Or(True, False)
+    True
+
+    See Also
+    ========
+    sympy.logic.boolalg.BooleanFalse
+
+    """
+    def __nonzero__(self):
+        return True
+
+    __bool__ = __nonzero__
+
+    def __hash__(self):
+        return hash(True)
+
+    def as_set(self):
+        """
+        Rewrite logic operators and relationals in terms of real sets.
+
+        Examples
+        ========
+
+        >>> from sympy import true
+        >>> true.as_set()
+        UniversalSet()
+        """
+        return S.UniversalSet
+
+
+class BooleanFalse(with_metaclass(Singleton, BooleanAtom)):
+    """
+    SymPy version of False, a singleton that can be accessed via S.false.
+
+    This is the SymPy version of False, for use in the logic module. The
+    primary advantage of using false instead of False is that shorthand boolean
+    operations like ~ and >> will work as expected on this class, whereas with
+    False they act bitwise on 0. Functions in the logic module will return this
+    class when they evaluate to false.
+
+    Notes
+    ======
+    See note in :py:class`sympy.logic.boolalg.BooleanTrue`
+
+    Examples
+    ========
+
+    >>> from sympy import sympify, false, Or, true
+    >>> sympify(False)
+    False
+    >>> false >> false
+    True
+    >>> False >> False
+    0
+    >>> Or(True, False)
+    True
+
+    See Also
+    ========
+    sympy.logic.boolalg.BooleanTrue
+
+    """
+    def __nonzero__(self):
+        return False
+
+    __bool__ = __nonzero__
+
+    def __hash__(self):
+        return hash(False)
+
+    def as_set(self):
+        """
+        Rewrite logic operators and relationals in terms of real sets.
+
+        Examples
+        ========
+
+        >>> from sympy import false
+        >>> false.as_set()
+        EmptySet()
+        """
+        from sympy.sets.sets import EmptySet
+        return EmptySet()
+
+true = BooleanTrue()
+false = BooleanFalse()
+# We want S.true and S.false to work, rather than S.BooleanTrue and
+# S.BooleanFalse, but making the class and instance names the same causes some
+# major issues (like the inability to import the class directly from this
+# file).
+S.true = true
+S.false = false
+
+converter[bool] = lambda x: S.true if x else S.false
 
 class BooleanFunction(Application, Boolean):
     """Boolean function is a function that lives in a boolean space
@@ -47,11 +278,31 @@ class BooleanFunction(Application, Boolean):
     """
     is_Boolean = True
 
-    def __call__(self, *args):
-        return self.func(*[arg(*args) for arg in self.args])
-
     def _eval_simplify(self, ratio, measure):
         return simplify_logic(self)
+
+    def to_nnf(self, simplify=True):
+        return self._to_nnf(*self.args, simplify=simplify)
+
+    @classmethod
+    def _to_nnf(cls, *args, **kwargs):
+        simplify = kwargs.get('simplify', True)
+        argset = set([])
+        for arg in args:
+            if not is_literal(arg):
+                arg = arg.to_nnf(simplify)
+            if simplify:
+                if isinstance(arg, cls):
+                    arg = arg.args
+                else:
+                    arg = (arg,)
+                for a in arg:
+                    if Not(a) in argset:
+                        return cls.zero
+                    argset.add(a)
+            else:
+                argset.add(arg)
+        return cls(*argset)
 
 
 class And(LatticeOp, BooleanFunction):
@@ -68,32 +319,63 @@ class And(LatticeOp, BooleanFunction):
     >>> from sympy.abc import x, y
     >>> from sympy.logic.boolalg import And
     >>> x & y
-    And(x, y)
+    x & y
 
     Notes
     =====
 
-    The operator operator ``&`` will perform bitwise operations
-    on integers and for convenience will construct an Add when
-    the arguments are symbolic, but the And function does not
-    perform bitwise operations and when any argument is True it
-    is simply removed from the arguments:
+    The ``&`` operator is provided as a convenience, but note that its use
+    here is different from its normal use in Python, which is bitwise
+    and. Hence, ``And(a, b)`` and ``a & b`` will return different things if
+    ``a`` and ``b`` are integers.
 
     >>> And(x, y).subs(x, 1)
     y
+
     """
-    zero = False
-    identity = True
+    zero = false
+    identity = true
+
+    nargs = None
 
     @classmethod
     def _new_args_filter(cls, args):
         newargs = []
-        for x in args:
+        rel = []
+        for x in reversed(list(args)):
             if isinstance(x, Number) or x in (0, 1):
                 newargs.append(True if x else False)
-            else:
-                newargs.append(x)
+                continue
+            if x.is_Relational:
+                c = x.canonical
+                if c in rel:
+                    continue
+                nc = (~c).canonical
+                if any(r == nc for r in rel):
+                    return [S.false]
+                rel.append(c)
+            newargs.append(x)
         return LatticeOp._new_args_filter(newargs, And)
+
+    def as_set(self):
+        """
+        Rewrite logic operators and relationals in terms of real sets.
+
+        Examples
+        ========
+
+        >>> from sympy import And, Symbol
+        >>> x = Symbol('x', real=True)
+        >>> And(x<2, x>-2).as_set()
+        (-2, 2)
+        """
+        from sympy.sets.sets import Intersection
+        if len(self.free_symbols) == 1:
+            return Intersection(*[arg.as_set() for arg in self.args])
+        else:
+            raise NotImplementedError("Sorry, And.as_set has not yet been"
+                                      " implemented for multivariate"
+                                      " expressions")
 
 
 class Or(LatticeOp, BooleanFunction):
@@ -110,117 +392,289 @@ class Or(LatticeOp, BooleanFunction):
     >>> from sympy.abc import x, y
     >>> from sympy.logic.boolalg import Or
     >>> x | y
-    Or(x, y)
+    x | y
 
     Notes
     =====
 
-    The operator operator ``|`` will perform bitwise operations
-    on integers and for convenience will construct an Or when
-    the arguments are symbolic, but the Or function does not
-    perform bitwise operations and when any argument is False it
-    is simply removed from the arguments:
+    The ``|`` operator is provided as a convenience, but note that its use
+    here is different from its normal use in Python, which is bitwise
+    or. Hence, ``Or(a, b)`` and ``a | b`` will return different things if
+    ``a`` and ``b`` are integers.
 
     >>> Or(x, y).subs(x, 0)
     y
+
     """
-    zero = True
-    identity = False
+    zero = true
+    identity = false
 
     @classmethod
     def _new_args_filter(cls, args):
         newargs = []
+        rel = []
         for x in args:
             if isinstance(x, Number) or x in (0, 1):
                 newargs.append(True if x else False)
-            else:
-                newargs.append(x)
+                continue
+            if x.is_Relational:
+                c = x.canonical
+                if c in rel:
+                    continue
+                nc = (~c).canonical
+                if any(r == nc for r in rel):
+                    return [S.true]
+                rel.append(c)
+            newargs.append(x)
         return LatticeOp._new_args_filter(newargs, Or)
+
+    def as_set(self):
+        """
+        Rewrite logic operators and relationals in terms of real sets.
+
+        Examples
+        ========
+
+        >>> from sympy import Or, Symbol
+        >>> x = Symbol('x', real=True)
+        >>> Or(x>2, x<-2).as_set()
+        (-oo, -2) U (2, oo)
+        """
+        from sympy.sets.sets import Union
+        if len(self.free_symbols) == 1:
+            return Union(*[arg.as_set() for arg in self.args])
+        else:
+            raise NotImplementedError("Sorry, Or.as_set has not yet been"
+                                      " implemented for multivariate"
+                                      " expressions")
 
 
 class Not(BooleanFunction):
     """
     Logical Not function (negation)
 
+
+    Returns True if the statement is False
+    Returns False if the statement is True
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import Not, And, Or
+    >>> from sympy.abc import x, A, B
+    >>> Not(True)
+    False
+    >>> Not(False)
+    True
+    >>> Not(And(True, False))
+    True
+    >>> Not(Or(True, False))
+    False
+    >>> Not(And(And(True, x), Or(x, False)))
+    ~x
+    >>> ~x
+    ~x
+    >>> Not(And(Or(A, B), Or(~A, ~B)))
+    ~((A | B) & (~A | ~B))
+
     Notes
     =====
 
-    De Morgan rules are applied automatically.
+    - The ``~`` operator is provided as a convenience, but note that its use
+      here is different from its normal use in Python, which is bitwise
+      not. In particular, ``~a`` and ``Not(a)`` will be different if ``a`` is
+      an integer. Furthermore, since bools in Python subclass from ``int``,
+      ``~True`` is the same as ``~1`` which is ``-2``, which has a boolean
+      value of True.  To avoid this issue, use the SymPy boolean types
+      ``true`` and ``false``.
+
+    >>> from sympy import true
+    >>> ~True
+    -2
+    >>> ~true
+    False
+
     """
 
     is_Not = True
 
     @classmethod
     def eval(cls, arg):
-        """
-        Logical Not function (negation)
+        from sympy import (
+            Equality, GreaterThan, LessThan,
+            StrictGreaterThan, StrictLessThan, Unequality)
+        if isinstance(arg, Number) or arg in (True, False):
+            return false if arg else true
+        if arg.is_Not:
+            return arg.args[0]
+        # Simplify Relational objects.
+        if isinstance(arg, Equality):
+            return Unequality(*arg.args)
+        if isinstance(arg, Unequality):
+            return Equality(*arg.args)
+        if isinstance(arg, StrictLessThan):
+            return GreaterThan(*arg.args)
+        if isinstance(arg, StrictGreaterThan):
+            return LessThan(*arg.args)
+        if isinstance(arg, LessThan):
+            return StrictGreaterThan(*arg.args)
+        if isinstance(arg, GreaterThan):
+            return StrictLessThan(*arg.args)
 
-        Returns True if the statement is False
-        Returns False if the statement is True
+    def as_set(self):
+        """
+        Rewrite logic operators and relationals in terms of real sets.
 
         Examples
         ========
 
-        >>> from sympy.logic.boolalg import Not, And, Or
-        >>> from sympy.abc import x
-        >>> Not(True)
-        False
-        >>> Not(False)
-        True
-        >>> Not(And(True, False))
-        True
-        >>> Not(Or(True, False))
-        False
-        >>> Not(And(And(True, x), Or(x, False)))
-        Not(x)
+        >>> from sympy import Not, Symbol
+        >>> x = Symbol('x', real=True)
+        >>> Not(x>0).as_set()
+        (-oo, 0]
         """
-        if isinstance(arg, Number) or arg in (0, 1):
-            return False if arg else True
-        # apply De Morgan Rules
-        if arg.func is And:
-            return Or(*[Not(a) for a in arg.args])
-        if arg.func is Or:
-            return And(*[Not(a) for a in arg.args])
-        if arg.func is Not:
-            return arg.args[0]
+        if len(self.free_symbols) == 1:
+            return self.args[0].as_set().complement(S.Reals)
+        else:
+            raise NotImplementedError("Sorry, Not.as_set has not yet been"
+                                      " implemented for mutivariate"
+                                      " expressions")
+
+    def to_nnf(self, simplify=True):
+        if is_literal(self):
+            return self
+
+        expr = self.args[0]
+
+        func, args = expr.func, expr.args
+
+        if func == And:
+            return Or._to_nnf(*[~arg for arg in args], simplify=simplify)
+
+        if func == Or:
+            return And._to_nnf(*[~arg for arg in args], simplify=simplify)
+
+        if func == Implies:
+            a, b = args
+            return And._to_nnf(a, ~b, simplify=simplify)
+
+        if func == Equivalent:
+            return And._to_nnf(Or(*args), Or(*[~arg for arg in args]), simplify=simplify)
+
+        if func == Xor:
+            result = []
+            for i in range(1, len(args)+1, 2):
+                for neg in combinations(args, i):
+                    clause = [~s if s in neg else s for s in args]
+                    result.append(Or(*clause))
+            return And._to_nnf(*result, simplify=simplify)
+
+        if func == ITE:
+            a, b, c = args
+            return And._to_nnf(Or(a, ~c), Or(~a, ~b), simplify=simplify)
+
+        raise ValueError("Illegal operator %s in expression" % func)
 
 
 class Xor(BooleanFunction):
     """
     Logical XOR (exclusive OR) function.
+
+
+    Returns True if an odd number of the arguments are True and the rest are
+    False.
+
+    Returns False if an even number of the arguments are True and the rest are
+    False.
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import Xor
+    >>> from sympy import symbols
+    >>> x, y = symbols('x y')
+    >>> Xor(True, False)
+    True
+    >>> Xor(True, True)
+    False
+    >>> Xor(True, False, True, True, False)
+    True
+    >>> Xor(True, False, True, False)
+    False
+    >>> x ^ y
+    Xor(x, y)
+
+    Notes
+    =====
+
+    The ``^`` operator is provided as a convenience, but note that its use
+    here is different from its normal use in Python, which is bitwise xor. In
+    particular, ``a ^ b`` and ``Xor(a, b)`` will be different if ``a`` and
+    ``b`` are integers.
+
+    >>> Xor(x, y).subs(y, 0)
+    x
+
     """
-    @classmethod
-    def eval(cls, *args):
-        """
-        Logical XOR (exclusive OR) function.
+    def __new__(cls, *args, **kwargs):
+        argset = set([])
+        obj = super(Xor, cls).__new__(cls, *args, **kwargs)
+        for arg in obj._args:
+            if isinstance(arg, Number) or arg in (True, False):
+                if arg:
+                    arg = true
+                else:
+                    continue
+            if isinstance(arg, Xor):
+                for a in arg.args:
+                    argset.remove(a) if a in argset else argset.add(a)
+            elif arg in argset:
+                argset.remove(arg)
+            else:
+                argset.add(arg)
+        rel = [(r, r.canonical, (~r).canonical) for r in argset if r.is_Relational]
+        odd = False  # is number of complimentary pairs odd? start 0 -> False
+        remove = []
+        for i, (r, c, nc) in enumerate(rel):
+            for j in range(i + 1, len(rel)):
+                rj, cj = rel[j][:2]
+                if cj == nc:
+                    odd = ~odd
+                    break
+                elif cj == c:
+                    break
+            else:
+                continue
+            remove.append((r, rj))
+        if odd:
+            argset.remove(true) if true in argset else argset.add(true)
+        for a, b in remove:
+            argset.remove(a)
+            argset.remove(b)
+        if len(argset) == 0:
+            return false
+        elif len(argset) == 1:
+            return argset.pop()
+        elif True in argset:
+            argset.remove(True)
+            return Not(Xor(*argset))
+        else:
+            obj._args = tuple(ordered(argset))
+            obj._argset = frozenset(argset)
+            return obj
 
-        Returns True if an odd number of the arguments are True
-            and the rest are False.
-        Returns False if an even number of the arguments are True
-            and the rest are False.
+    @property
+    @cacheit
+    def args(self):
+        return tuple(ordered(self._argset))
 
-        Examples
-        ========
-
-        >>> from sympy.logic.boolalg import Xor
-        >>> Xor(True, False)
-        True
-        >>> Xor(True, True)
-        False
-
-        >>> Xor(True, False, True, True, False)
-        True
-        >>> Xor(True, False, True, False)
-        False
-        """
-        if not args:
-            return False
-        args = list(args)
-        A = args.pop()
-        while args:
-            B = args.pop()
-            A = Or(And(A, Not(B)), And(Not(A), B))
-        return A
+    def to_nnf(self, simplify=True):
+        args = []
+        for i in range(0, len(self.args)+1, 2):
+            for neg in combinations(self.args, i):
+                clause = [~s if s in neg else s for s in self.args]
+                args.append(Or(*clause))
+        return And._to_nnf(*args, simplify=simplify)
 
 
 class Nand(BooleanFunction):
@@ -229,24 +683,26 @@ class Nand(BooleanFunction):
 
     It evaluates its arguments in order, giving True immediately if any
     of them are False, and False if they are all True.
+
+    Returns True if any of the arguments are False
+    Returns False if all arguments are True
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import Nand
+    >>> from sympy import symbols
+    >>> x, y = symbols('x y')
+    >>> Nand(False, True)
+    True
+    >>> Nand(True, True)
+    False
+    >>> Nand(x, y)
+    ~(x & y)
+
     """
     @classmethod
     def eval(cls, *args):
-        """
-        Logical NAND function.
-
-        Returns True if any of the arguments are False
-        Returns False if all arguments are True
-
-        Examples
-        ========
-
-        >>> from sympy.logic.boolalg import Nand
-        >>> Nand(False, True)
-        True
-        >>> Nand(True, True)
-        False
-        """
         return Not(And(*args))
 
 
@@ -256,29 +712,63 @@ class Nor(BooleanFunction):
 
     It evaluates its arguments in order, giving False immediately if any
     of them are True, and True if they are all False.
+
+    Returns False if any argument is True
+    Returns True if all arguments are False
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import Nor
+    >>> from sympy import symbols
+    >>> x, y = symbols('x y')
+
+    >>> Nor(True, False)
+    False
+    >>> Nor(True, True)
+    False
+    >>> Nor(False, True)
+    False
+    >>> Nor(False, False)
+    True
+    >>> Nor(x, y)
+    ~(x | y)
+
     """
     @classmethod
     def eval(cls, *args):
-        """
-        Logical NOR function.
-
-        Returns False if any argument is True
-        Returns True if all arguments are False
-
-        Examples
-        ========
-
-        >>> from sympy.logic.boolalg import Nor
-        >>> Nor(True, False)
-        False
-        >>> Nor(True, True)
-        False
-        >>> Nor(False, True)
-        False
-        >>> Nor(False, False)
-        True
-        """
         return Not(Or(*args))
+
+
+class Xnor(BooleanFunction):
+    """
+    Logical XNOR function.
+
+    Returns False if an odd number of the arguments are True and the rest are
+    False.
+
+    Returns True if an even number of the arguments are True and the rest are
+    False.
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import Xnor
+    >>> from sympy import symbols
+    >>> x, y = symbols('x y')
+    >>> Xnor(True, False)
+    False
+    >>> Xnor(True, True)
+    True
+    >>> Xnor(True, False, True, True, False)
+    False
+    >>> Xnor(True, False, True, False)
+    True
+
+    """
+    @classmethod
+    def eval(cls, *args):
+        return Not(Xor(*args))
 
 
 class Implies(BooleanFunction):
@@ -286,29 +776,51 @@ class Implies(BooleanFunction):
     Logical implication.
 
     A implies B is equivalent to !A v B
+
+    Accepts two Boolean arguments; A and B.
+    Returns False if A is True and B is False
+    Returns True otherwise.
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import Implies
+    >>> from sympy import symbols
+    >>> x, y = symbols('x y')
+
+    >>> Implies(True, False)
+    False
+    >>> Implies(False, False)
+    True
+    >>> Implies(True, True)
+    True
+    >>> Implies(False, True)
+    True
+    >>> x >> y
+    Implies(x, y)
+    >>> y << x
+    Implies(x, y)
+
+    Notes
+    =====
+
+    The ``>>`` and ``<<`` operators are provided as a convenience, but note
+    that their use here is different from their normal use in Python, which is
+    bit shifts. Hence, ``Implies(a, b)`` and ``a >> b`` will return different
+    things if ``a`` and ``b`` are integers.  In particular, since Python
+    considers ``True`` and ``False`` to be integers, ``True >> True`` will be
+    the same as ``1 >> 1``, i.e., 0, which has a truth value of False.  To
+    avoid this issue, use the SymPy objects ``true`` and ``false``.
+
+    >>> from sympy import true, false
+    >>> True >> False
+    1
+    >>> true >> false
+    False
+
     """
     @classmethod
     def eval(cls, *args):
-        """
-        Logical implication.
-
-        Accepts two Boolean arguments; A and B.
-        Returns False if A is True and B is False
-        Returns True otherwise.
-
-        Examples
-        ========
-
-        >>> from sympy.logic.boolalg import Implies
-        >>> Implies(True, False)
-        False
-        >>> Implies(False, False)
-        True
-        >>> Implies(True, True)
-        True
-        >>> Implies(False, True)
-        True
-        """
         try:
             newargs = []
             for x in args:
@@ -321,10 +833,21 @@ class Implies(BooleanFunction):
             raise ValueError(
                 "%d operand(s) used for an Implies "
                 "(pairs are required): %s" % (len(args), str(args)))
-        if A is True or A is False or B is True or B is False:
+        if A == True or A == False or B == True or B == False:
             return Or(Not(A), B)
+        elif A == B:
+            return S.true
+        elif A.is_Relational and B.is_Relational:
+            if A.canonical == B.canonical:
+                return S.true
+            if (~A).canonical == B.canonical:
+                return B
         else:
             return Basic.__new__(cls, *args)
+
+    def to_nnf(self, simplify=True):
+        a, b = self.args
+        return Or._to_nnf(~a, b, simplify=simplify)
 
 
 class Equivalent(BooleanFunction):
@@ -332,77 +855,130 @@ class Equivalent(BooleanFunction):
     Equivalence relation.
 
     Equivalent(A, B) is True iff A and B are both True or both False
+
+    Returns True if all of the arguments are logically equivalent.
+    Returns False otherwise.
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import Equivalent, And
+    >>> from sympy.abc import x, y
+    >>> Equivalent(False, False, False)
+    True
+    >>> Equivalent(True, False, False)
+    False
+    >>> Equivalent(x, And(x, True))
+    True
     """
-    @classmethod
-    def eval(cls, *args):
-        """
-        Equivalence relation.
+    def __new__(cls, *args, **options):
+        from sympy.core.relational import Relational
+        args = [_sympify(arg) for arg in args]
 
-        Returns True if all of the arguments are logically equivalent.
-        Returns False otherwise.
-
-        Examples
-        ========
-
-        >>> from sympy.logic.boolalg import Equivalent, And
-        >>> from sympy.abc import x
-        >>> Equivalent(False, False, False)
-        True
-        >>> Equivalent(True, False, False)
-        False
-        >>> Equivalent(x, And(x, True))
-        True
-
-        """
-
-        newargs = []
+        argset = set(args)
         for x in args:
-            if isinstance(x, Number) or x in (0, 1):
-                newargs.append(True if x else False)
-            else:
-                newargs.append(x)
-        argset = set(newargs)
+            if isinstance(x, Number) or x in [True, False]: # Includes 0, 1
+                argset.discard(x)
+                argset.add(True if x else False)
+        rel = []
+        for r in argset:
+            if isinstance(r, Relational):
+                rel.append((r, r.canonical, (~r).canonical))
+        remove = []
+        for i, (r, c, nc) in enumerate(rel):
+            for j in range(i + 1, len(rel)):
+                rj, cj = rel[j][:2]
+                if cj == nc:
+                    return false
+                elif cj == c:
+                    remove.append((r, rj))
+                    break
+        for a, b in remove:
+            argset.remove(a)
+            argset.remove(b)
+            argset.add(True)
         if len(argset) <= 1:
-            return True
+            return true
         if True in argset:
             argset.discard(True)
             return And(*argset)
         if False in argset:
             argset.discard(False)
-            return Nor(*argset)
-        return Basic.__new__(cls, *set(args))
+            return And(*[~arg for arg in argset])
+        _args = frozenset(argset)
+        obj = super(Equivalent, cls).__new__(cls, _args)
+        obj._argset = _args
+        return obj
+
+    @property
+    @cacheit
+    def args(self):
+        return tuple(ordered(self._argset))
+
+    def to_nnf(self, simplify=True):
+        args = []
+        for a, b in zip(self.args, self.args[1:]):
+            args.append(Or(~a, b))
+        args.append(Or(~self.args[-1], self.args[0]))
+        return And._to_nnf(*args, simplify=simplify)
 
 
 class ITE(BooleanFunction):
     """
     If then else clause.
+
+    ITE(A, B, C) evaluates and returns the result of B if A is true
+    else it returns the result of C
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import ITE, And, Xor, Or
+    >>> from sympy.abc import x, y, z
+    >>> ITE(True, False, True)
+    False
+    >>> ITE(Or(True, False), And(True, True), Xor(True, True))
+    True
+    >>> ITE(x, y, z)
+    ITE(x, y, z)
+    >>> ITE(True, x, y)
+    x
+    >>> ITE(False, x, y)
+    y
+    >>> ITE(x, y, y)
+    y
     """
     @classmethod
     def eval(cls, *args):
-        """
-        If then else clause
+        try:
+            a, b, c = args
+        except ValueError:
+            raise ValueError("ITE expects exactly 3 arguments")
+        if a == True:
+            return b
+        if a == False:
+            return c
+        if b == c:
+            return b
+        else:
+            if b == True and c == False:
+                return a
+            if b == False and c == True:
+                return Not(a)
 
-        ITE(A, B, C) evaluates and returns the result of B if A is true
-        else it returns the result of C
+    def to_nnf(self, simplify=True):
+        a, b, c = self.args
+        return And._to_nnf(Or(~a, b), Or(a, c), simplify=simplify)
 
-        Examples
-        ========
+    def _eval_derivative(self, x):
+        return self.func(self.args[0], *[a.diff(x) for a in self.args[1:]])
 
-        >>> from sympy.logic.boolalg import ITE, And, Xor, Or
-        >>> from sympy.abc import x, y, z
-        >>> x = True
-        >>> y = False
-        >>> z = True
-        >>> ITE(x, y, z)
-        False
-        >>> ITE(Or(x, y), And(x, z), Xor(z, x))
-        True
-        """
-        args = list(args)
-        if len(args) == 3:
-            return Or(And(args[0], args[1]), And(Not(args[0]), args[2]))
-        raise ValueError("ITE expects 3 arguments, but got %d: %s" %
-                         (len(args), str(args)))
+    # the diff method below is copied from Expr class
+    def diff(self, *symbols, **assumptions):
+        new_symbols = list(map(sympify, symbols))  # e.g. x, 2, y, z
+        assumptions.setdefault("evaluate", True)
+        return Derivative(self, *new_symbols, **assumptions)
+
 
 ### end class definitions. Some useful methods
 
@@ -416,9 +992,9 @@ def conjuncts(expr):
     >>> from sympy.logic.boolalg import conjuncts
     >>> from sympy.abc import A, B
     >>> conjuncts(A & B)
-    frozenset([A, B])
+    frozenset({A, B})
     >>> conjuncts(A | B)
-    frozenset([Or(A, B)])
+    frozenset({A | B})
 
     """
     return And.make_args(expr)
@@ -433,9 +1009,9 @@ def disjuncts(expr):
     >>> from sympy.logic.boolalg import disjuncts
     >>> from sympy.abc import A, B
     >>> disjuncts(A | B)
-    frozenset([A, B])
+    frozenset({A, B})
     >>> disjuncts(A & B)
-    frozenset([And(A, B)])
+    frozenset({A & B})
 
     """
     return Or.make_args(expr)
@@ -452,7 +1028,7 @@ def distribute_and_over_or(expr):
     >>> from sympy.logic.boolalg import distribute_and_over_or, And, Or, Not
     >>> from sympy.abc import A, B, C
     >>> distribute_and_over_or(Or(A, And(Not(B), Not(C))))
-    And(Or(A, Not(B)), Or(A, Not(C)))
+    (A | ~B) & (A | ~C)
     """
     return _distribute((expr, And, Or))
 
@@ -470,7 +1046,7 @@ def distribute_or_over_and(expr):
     >>> from sympy.logic.boolalg import distribute_or_over_and, And, Or, Not
     >>> from sympy.abc import A, B, C
     >>> distribute_or_over_and(And(Or(Not(A), B), C))
-    Or(And(B, C), And(C, Not(A)))
+    (B & C) | (C & ~A)
     """
     return _distribute((expr, Or, And))
 
@@ -496,10 +1072,33 @@ def _distribute(info):
         return info[0]
 
 
+def to_nnf(expr, simplify=True):
+    """
+    Converts expr to Negation Normal Form.
+    A logical expression is in Negation Normal Form (NNF) if it
+    contains only And, Or and Not, and Not is applied only to literals.
+    If simplify is True, the result contains no redundant clauses.
+
+    Examples
+    ========
+
+    >>> from sympy.abc import A, B, C, D
+    >>> from sympy.logic.boolalg import Not, Equivalent, to_nnf
+    >>> to_nnf(Not((~A & ~B) | (C & D)))
+    (A | B) & (~C | ~D)
+    >>> to_nnf(Equivalent(A >> B, B >> A))
+    (A | ~B | (A & ~B)) & (B | ~A | (B & ~A))
+    """
+    if is_nnf(expr, simplify):
+        return expr
+    return expr.to_nnf(simplify)
+
+
 def to_cnf(expr, simplify=False):
     """
     Convert a propositional logical sentence s to conjunctive normal form.
     That is, of the form ((A | ~B | ...) & (B | C | ...) & ...)
+    If simplify is True, the expr is evaluated to its simplest CNF form.
 
     Examples
     ========
@@ -507,7 +1106,9 @@ def to_cnf(expr, simplify=False):
     >>> from sympy.logic.boolalg import to_cnf
     >>> from sympy.abc import A, B, D
     >>> to_cnf(~(A | B) | D)
-    And(Or(D, Not(A)), Or(D, Not(B)))
+    (D | ~A) & (D | ~B)
+    >>> to_cnf((A | B) & (A | ~A), True)
+    A | B
 
     """
     expr = sympify(expr)
@@ -515,11 +1116,7 @@ def to_cnf(expr, simplify=False):
         return expr
 
     if simplify:
-        simplified_expr = distribute_and_over_or(simplify_logic(expr))
-        if len(simplified_expr.args) < len(to_cnf(expr).args):
-            return simplified_expr
-        else:
-            return to_cnf(expr)
+        return simplify_logic(expr, 'cnf', True)
 
     # Don't convert unless we have to
     if is_cnf(expr):
@@ -533,14 +1130,17 @@ def to_dnf(expr, simplify=False):
     """
     Convert a propositional logical sentence s to disjunctive normal form.
     That is, of the form ((A & ~B & ...) | (B & C & ...) | ...)
+    If simplify is True, the expr is evaluated to its simplest DNF form.
 
     Examples
     ========
 
     >>> from sympy.logic.boolalg import to_dnf
-    >>> from sympy.abc import A, B, C, D
+    >>> from sympy.abc import A, B, C
     >>> to_dnf(B & (A | C))
-    Or(And(A, B), And(B, C))
+    (A & B) | (B & C)
+    >>> to_dnf((A & B) | (A & ~B) | (B & C) | (~B & C), True)
+    A | C
 
     """
     expr = sympify(expr)
@@ -548,11 +1148,7 @@ def to_dnf(expr, simplify=False):
         return expr
 
     if simplify:
-        simplified_expr = distribute_or_over_and(simplify_logic(expr))
-        if len(simplified_expr.args) < len(to_dnf(expr).args):
-            return simplified_expr
-        else:
-            return to_dnf(expr)
+        return simplify_logic(expr, 'dnf', True)
 
     # Don't convert unless we have to
     if is_dnf(expr):
@@ -560,6 +1156,52 @@ def to_dnf(expr, simplify=False):
 
     expr = eliminate_implications(expr)
     return distribute_or_over_and(expr)
+
+
+def is_nnf(expr, simplified=True):
+    """
+    Checks if expr is in Negation Normal Form.
+    A logical expression is in Negation Normal Form (NNF) if it
+    contains only And, Or and Not, and Not is applied only to literals.
+    If simpified is True, checks if result contains no redundant clauses.
+
+    Examples
+    ========
+
+    >>> from sympy.abc import A, B, C
+    >>> from sympy.logic.boolalg import Not, is_nnf
+    >>> is_nnf(A & B | ~C)
+    True
+    >>> is_nnf((A | ~A) & (B | C))
+    False
+    >>> is_nnf((A | ~A) & (B | C), False)
+    True
+    >>> is_nnf(Not(A & B) | C)
+    False
+    >>> is_nnf((A >> B) & (B >> A))
+    False
+    """
+
+    expr = sympify(expr)
+    if is_literal(expr):
+        return True
+
+    stack = [expr]
+
+    while stack:
+        expr = stack.pop()
+        if expr.func in (And, Or):
+            if simplified:
+                args = expr.args
+                for arg in args:
+                    if Not(arg) in args:
+                        return False
+            stack.extend(expr.args)
+
+        elif not is_literal(expr):
+            return False
+
+    return True
 
 
 def is_cnf(expr):
@@ -666,36 +1308,40 @@ def eliminate_implications(expr):
          eliminate_implications
     >>> from sympy.abc import A, B, C
     >>> eliminate_implications(Implies(A, B))
-    Or(B, Not(A))
+    B | ~A
     >>> eliminate_implications(Equivalent(A, B))
-    And(Or(A, Not(B)), Or(B, Not(A)))
+    (A | ~B) & (B | ~A)
+    >>> eliminate_implications(Equivalent(A, B, C))
+    (A | ~C) & (B | ~A) & (C | ~B)
     """
-    expr = sympify(expr)
-    if expr.is_Atom:
-        return expr  # (Atoms are unchanged.)
-    args = list(map(eliminate_implications, expr.args))
-    if expr.func is Implies:
-        a, b = args[0], args[-1]
-        return (~a) | b
-    elif expr.func is Equivalent:
-        a, b = args[0], args[-1]
-        return (a | Not(b)) & (b | Not(a))
+    return to_nnf(expr)
+
+
+def is_literal(expr):
+    """
+    Returns True if expr is a literal, else False.
+
+    Examples
+    ========
+
+    >>> from sympy import Or, Q
+    >>> from sympy.abc import A, B
+    >>> from sympy.logic.boolalg import is_literal
+    >>> is_literal(A)
+    True
+    >>> is_literal(~A)
+    True
+    >>> is_literal(Q.zero(A))
+    True
+    >>> is_literal(A + B)
+    True
+    >>> is_literal(Or(A, B))
+    False
+    """
+    if isinstance(expr, Not):
+        return not isinstance(expr.args[0], BooleanFunction)
     else:
-        return expr.func(*args)
-
-
-@deprecated(
-    useinstead="sympify", issue=3451, deprecated_since_version="0.7.3")
-def compile_rule(s):
-    """
-    Transforms a rule into a SymPy expression
-    A rule is a string of the form "symbol1 & symbol2 | ..."
-
-    Note: This function is deprecated.  Use sympify() instead.
-
-    """
-    import re
-    return sympify(re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*)', r'Symbol("\1")', s))
+        return not isinstance(expr, BooleanFunction)
 
 
 def to_int_repr(clauses, symbols):
@@ -707,13 +1353,13 @@ def to_int_repr(clauses, symbols):
 
     >>> from sympy.logic.boolalg import to_int_repr
     >>> from sympy.abc import x, y
-    >>> to_int_repr([x | y, y], [x, y]) == [set([1, 2]), set([2])]
+    >>> to_int_repr([x | y, y], [x, y]) == [{1, 2}, {2}]
     True
 
     """
 
     # Convert the symbol list into a dict
-    symbols = dict(list(zip(symbols, list(xrange(1, len(symbols) + 1)))))
+    symbols = dict(list(zip(symbols, list(range(1, len(symbols) + 1)))))
 
     def append_symbol(arg, symbols):
         if arg.func is Not:
@@ -723,6 +1369,123 @@ def to_int_repr(clauses, symbols):
 
     return [set(append_symbol(arg, symbols) for arg in Or.make_args(c))
             for c in clauses]
+
+
+def term_to_integer(term):
+    """
+    Return an integer corresponding to the base-2 digits given by ``term``.
+
+    Parameters
+    ==========
+
+    term : a string or list of ones and zeros
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import term_to_integer
+    >>> term_to_integer([1, 0, 0])
+    4
+    >>> term_to_integer('100')
+    4
+
+    """
+
+    return int(''.join(list(map(str, list(term)))), 2)
+
+
+def integer_to_term(k, n_bits=None):
+    """
+    Return a list of the base-2 digits in the integer, ``k``.
+
+    Parameters
+    ==========
+
+    k : int
+    n_bits : int
+        If ``n_bits`` is given and the number of digits in the binary
+        representation of ``k`` is smaller than ``n_bits`` then left-pad the
+        list with 0s.
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import integer_to_term
+    >>> integer_to_term(4)
+    [1, 0, 0]
+    >>> integer_to_term(4, 6)
+    [0, 0, 0, 1, 0, 0]
+    """
+
+    s = '{0:0{1}b}'.format(abs(as_int(k)), as_int(abs(n_bits or 0)))
+    return list(map(int, s))
+
+
+def truth_table(expr, variables, input=True):
+    """
+    Return a generator of all possible configurations of the input variables,
+    and the result of the boolean expression for those values.
+
+    Parameters
+    ==========
+
+    expr : string or boolean expression
+    variables : list of variables
+    input : boolean (default True)
+        indicates whether to return the input combinations.
+
+    Examples
+    ========
+
+    >>> from sympy.logic.boolalg import truth_table
+    >>> from sympy.abc import x,y
+    >>> table = truth_table(x >> y, [x, y])
+    >>> for t in table:
+    ...     print('{0} -> {1}'.format(*t))
+    [0, 0] -> True
+    [0, 1] -> True
+    [1, 0] -> False
+    [1, 1] -> True
+
+    >>> table = truth_table(x | y, [x, y])
+    >>> list(table)
+    [([0, 0], False), ([0, 1], True), ([1, 0], True), ([1, 1], True)]
+
+    If input is false, truth_table returns only a list of truth values.
+    In this case, the corresponding input values of variables can be
+    deduced from the index of a given output.
+
+    >>> from sympy.logic.boolalg import integer_to_term
+    >>> vars = [y, x]
+    >>> values = truth_table(x >> y, vars, input=False)
+    >>> values = list(values)
+    >>> values
+    [True, False, True, True]
+
+    >>> for i, value in enumerate(values):
+    ...     print('{0} -> {1}'.format(list(zip(
+    ...     vars, integer_to_term(i, len(vars)))), value))
+    [(y, 0), (x, 0)] -> True
+    [(y, 0), (x, 1)] -> False
+    [(y, 1), (x, 0)] -> True
+    [(y, 1), (x, 1)] -> True
+
+    """
+    variables = [sympify(v) for v in variables]
+
+    expr = sympify(expr)
+    if not isinstance(expr, BooleanFunction) and not is_literal(expr):
+        return
+
+    table = product([0, 1], repeat=len(variables))
+    for term in table:
+        term = list(term)
+        value = expr.xreplace(dict(zip(variables, term)))
+
+        if input:
+            yield term, value
+        else:
+            yield value
 
 
 def _check_pair(minterm1, minterm2):
@@ -852,11 +1615,13 @@ def SOPform(variables, minterms, dontcares=None):
     ========
 
     >>> from sympy.logic import SOPform
+    >>> from sympy import symbols
+    >>> w, x, y, z = symbols('w x y z')
     >>> minterms = [[0, 0, 0, 1], [0, 0, 1, 1],
     ...             [0, 1, 1, 1], [1, 0, 1, 1], [1, 1, 1, 1]]
     >>> dontcares = [[0, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 1]]
-    >>> SOPform(['w','x','y','z'], minterms, dontcares)
-    Or(And(Not(w), z), And(y, z))
+    >>> SOPform([w, x, y, z], minterms, dontcares)
+    (y & z) | (z & ~w)
 
     References
     ==========
@@ -864,12 +1629,9 @@ def SOPform(variables, minterms, dontcares=None):
     .. [1] en.wikipedia.org/wiki/Quine-McCluskey_algorithm
 
     """
-    from sympy.core.symbol import Symbol
-
-    variables = [Symbol(v) if not isinstance(v, Symbol) else v
-                 for v in variables]
+    variables = [sympify(v) for v in variables]
     if minterms == []:
-        return False
+        return false
 
     minterms = [list(i) for i in minterms]
     dontcares = [list(i) for i in (dontcares or [])]
@@ -905,11 +1667,13 @@ def POSform(variables, minterms, dontcares=None):
     ========
 
     >>> from sympy.logic import POSform
+    >>> from sympy import symbols
+    >>> w, x, y, z = symbols('w x y z')
     >>> minterms = [[0, 0, 0, 1], [0, 0, 1, 1], [0, 1, 1, 1],
     ...             [1, 0, 1, 1], [1, 1, 1, 1]]
     >>> dontcares = [[0, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 1]]
-    >>> POSform(['w','x','y','z'], minterms, dontcares)
-    And(Or(Not(w), y), z)
+    >>> POSform([w, x, y, z], minterms, dontcares)
+    z & (y | ~w)
 
     References
     ==========
@@ -917,12 +1681,9 @@ def POSform(variables, minterms, dontcares=None):
     .. [1] en.wikipedia.org/wiki/Quine-McCluskey_algorithm
 
     """
-    from sympy.core.symbol import Symbol
-
-    variables = [Symbol(v) if not isinstance(v, Symbol) else v
-                 for v in variables]
+    variables = [sympify(v) for v in variables]
     if minterms == []:
-        return False
+        return false
 
     minterms = [list(i) for i in minterms]
     dontcares = [list(i) for i in (dontcares or [])]
@@ -944,12 +1705,34 @@ def POSform(variables, minterms, dontcares=None):
     return And(*[_convert_to_varsPOS(x, variables) for x in essential])
 
 
-def simplify_logic(expr):
+def _find_predicates(expr):
+    """Helper to find logical predicates in BooleanFunctions.
+
+    A logical predicate is defined here as anything within a BooleanFunction
+    that is not a BooleanFunction itself.
+
     """
-    This function simplifies a boolean function to its
-    simplified version in SOP or POS form. The return type is an
-    Or or And object in SymPy. The input can be a string or a boolean
-    expression.
+    if not isinstance(expr, BooleanFunction):
+        return {expr}
+    return set().union(*(_find_predicates(i) for i in expr.args))
+
+
+def simplify_logic(expr, form=None, deep=True):
+    """
+    This function simplifies a boolean function to its simplified version
+    in SOP or POS form. The return type is an Or or And object in SymPy.
+
+    Parameters
+    ==========
+
+    expr : string or boolean expression
+    form : string ('cnf' or 'dnf') or None (default).
+        If 'cnf' or 'dnf', the simplest expression in the corresponding
+        normal form is returned; if None, the answer is returned
+        according to the form with fewest args (in CNF by default).
+    deep : boolean (default True)
+        indicates whether to recursively simplify any
+        non-boolean functions contained within the input.
 
     Examples
     ========
@@ -957,29 +1740,37 @@ def simplify_logic(expr):
     >>> from sympy.logic import simplify_logic
     >>> from sympy.abc import x, y, z
     >>> from sympy import S
-    >>> b = '(~x & ~y & ~z) | ( ~x & ~y & z)'
+    >>> b = (~x & ~y & ~z) | ( ~x & ~y & z)
     >>> simplify_logic(b)
-    And(Not(x), Not(y))
+    ~x & ~y
 
     >>> S(b)
-    Or(And(Not(x), Not(y), Not(z)), And(Not(x), Not(y), z))
+    (z & ~x & ~y) | (~x & ~y & ~z)
     >>> simplify_logic(_)
-    And(Not(x), Not(y))
+    ~x & ~y
 
     """
-    expr = sympify(expr)
-    if not isinstance(expr, BooleanFunction):
-        return expr
-    variables = list(expr.free_symbols)
-    truthtable = []
-    for t in product([0, 1], repeat=len(variables)):
-        t = list(t)
-        if expr.subs(list(zip(variables, t))) == True:
-            truthtable.append(t)
-    if (len(truthtable) >= (2 ** (len(variables) - 1))):
-        return SOPform(variables, truthtable)
+
+    if form == 'cnf' or form == 'dnf' or form is None:
+        expr = sympify(expr)
+        if not isinstance(expr, BooleanFunction):
+            return expr
+        variables = _find_predicates(expr)
+        truthtable = []
+        for t in product([0, 1], repeat=len(variables)):
+            t = list(t)
+            if expr.xreplace(dict(zip(variables, t))) == True:
+                truthtable.append(t)
+        if deep:
+            from sympy.simplify.simplify import simplify
+            variables = [simplify(v) for v in variables]
+        if form == 'dnf' or \
+           (form is None and len(truthtable) >= (2 ** (len(variables) - 1))):
+            return SOPform(variables, truthtable)
+        elif form == 'cnf' or form is None:
+            return POSform(variables, truthtable)
     else:
-        return POSform(variables, truthtable)
+        raise ValueError("form can be cnf or dnf only")
 
 
 def _finger(eq):
@@ -1025,37 +1816,38 @@ def _finger(eq):
     return inv
 
 
-def bool_equal(bool1, bool2, info=False):
-    """Return True if the two expressions represent the same logical
-    behavior for some correspondence between the variables of each
-    (which may be different). For example, And(x, y) is logically
-    equivalent to And(a, b) for {x: a, y: b} (or vice versa). If the
-    mapping is desired, then set ``info`` to True and the simplified
-    form of the functions and the mapping of variables will be
-    returned.
+def bool_map(bool1, bool2):
+    """
+    Return the simplified version of bool1, and the mapping of variables
+    that makes the two expressions bool1 and bool2 represent the same
+    logical behaviour for some correspondence between the variables
+    of each.
+    If more than one mappings of this sort exist, one of them
+    is returned.
+    For example, And(x, y) is logically equivalent to And(a, b) for
+    the mapping {x: a, y:b} or {x: b, y:a}.
+    If no such mapping exists, return False.
 
     Examples
     ========
 
-    >>> from sympy import SOPform, bool_equal, Or, And, Not, Xor
+    >>> from sympy import SOPform, bool_map, Or, And, Not, Xor
     >>> from sympy.abc import w, x, y, z, a, b, c, d
-    >>> function1 = SOPform(['x','z','y'],[[1, 0, 1], [0, 0, 1]])
-    >>> function2 = SOPform(['a','b','c'],[[1, 0, 1], [1, 0, 0]])
-    >>> bool_equal(function1, function2, info=True)
-    (And(Not(z), y), {y: a, z: b})
+    >>> function1 = SOPform([x, z, y],[[1, 0, 1], [0, 0, 1]])
+    >>> function2 = SOPform([a, b, c],[[1, 0, 1], [1, 0, 0]])
+    >>> bool_map(function1, function2)
+    (y & ~z, {y: a, z: b})
 
     The results are not necessarily unique, but they are canonical. Here,
     ``(w, z)`` could be ``(a, d)`` or ``(d, a)``:
 
     >>> eq =  Or(And(Not(y), w), And(Not(y), z), And(x, y))
     >>> eq2 = Or(And(Not(c), a), And(Not(c), d), And(b, c))
-    >>> bool_equal(eq, eq2)
-    True
-    >>> bool_equal(eq, eq2, info=True)
-    (Or(And(Not(y), w), And(Not(y), z), And(x, y)), {w: a, x: b, y: c, z: d})
+    >>> bool_map(eq, eq2)
+    ((x & y) | (w & ~y) | (z & ~y), {w: a, x: b, y: c, z: d})
     >>> eq = And(Xor(a, b), c, And(c,d))
-    >>> bool_equal(eq, eq.subs(c, x), info=True)
-    (And(Or(Not(a), Not(b)), Or(a, b), c, d), {a: a, b: b, c: d, d: x})
+    >>> bool_map(eq, eq.subs(c, x))
+    (c & d & (a | b) & (~a | ~b), {a: a, b: b, c: d, d: x})
 
     """
 
@@ -1069,7 +1861,7 @@ def bool_equal(bool1, bool2, info=False):
         arguments are only symbols or negated symbols. For example,
         And(x, Not(y), Or(w, Not(z))).
 
-        Basic.match is not robust enough (see issue 1736) so this is
+        Basic.match is not robust enough (see issue 4835) so this is
         a workaround that is valid for simplified boolean expressions
         """
 
@@ -1103,6 +1895,6 @@ def bool_equal(bool1, bool2, info=False):
     a = simplify_logic(bool1)
     b = simplify_logic(bool2)
     m = match(a, b)
-    if m and info:
+    if m:
         return a, m
     return m is not None

@@ -22,8 +22,9 @@ def deprecated(**decorator_kwargs):
         def new_func(*args, **kwargs):
             from sympy.utilities.exceptions import SymPyDeprecationWarning
             decorator_kwargs.setdefault('feature', func.__name__)
-            SymPyDeprecationWarning(**decorator_kwargs).warn()
+            SymPyDeprecationWarning(**decorator_kwargs).warn(stacklevel=3)
             return func(*args, **kwargs)
+        new_func._sympy_deprecated_func = func
         return new_func
     return deprecated_decorator
 
@@ -57,10 +58,10 @@ def __sympifyit(func, arg, retval=None):
     """
 
     # we support f(a,b) only
-    assert get_function_code(func).co_argcount
+    if not get_function_code(func).co_argcount:
+        raise LookupError("func not found")
     # only b is _sympified
     assert get_function_code(func).co_varnames[1] == arg
-
     if retval is None:
         @wraps(func)
         def __sympifyit_wrapper(a, b):

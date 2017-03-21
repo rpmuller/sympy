@@ -6,7 +6,7 @@ from __future__ import print_function, division
 from sympy.assumptions import Q, ask
 from sympy.assumptions.handlers import CommonHandler
 from sympy.ntheory import isprime
-from sympy.core import S
+from sympy.core import S, Float
 
 
 class AskPrimeHandler(CommonHandler):
@@ -18,6 +18,10 @@ class AskPrimeHandler(CommonHandler):
     """
 
     @staticmethod
+    def Expr(expr, assumptions):
+        return expr.is_prime
+
+    @staticmethod
     def _number(expr, assumptions):
         # helper method
         try:
@@ -26,12 +30,12 @@ class AskPrimeHandler(CommonHandler):
                 raise TypeError
         except TypeError:
             return False
-        return isprime(i)
+        return isprime(expr)
 
     @staticmethod
     def Basic(expr, assumptions):
         # Just use int(expr) once
-        # http://code.google.com/p/sympy/issues/detail?id=1462
+        # https://github.com/sympy/sympy/issues/4561
         # is solved
         if expr.is_number:
             return AskPrimeHandler._number(expr, assumptions)
@@ -41,13 +45,11 @@ class AskPrimeHandler(CommonHandler):
         if expr.is_number:
             return AskPrimeHandler._number(expr, assumptions)
         for arg in expr.args:
-            if ask(Q.integer(arg), assumptions):
-                pass
-            else:
-                break
-        else:
-            # a product of integers can't be a prime
-            return False
+            if not ask(Q.integer(arg), assumptions):
+                return None
+        for arg in expr.args:
+            if arg.is_number and arg.is_composite:
+                return False
 
     @staticmethod
     def Pow(expr, assumptions):
@@ -78,6 +80,10 @@ class AskPrimeHandler(CommonHandler):
 class AskCompositeHandler(CommonHandler):
 
     @staticmethod
+    def Expr(expr, assumptions):
+        return expr.is_composite
+
+    @staticmethod
     def Basic(expr, assumptions):
         _positive = ask(Q.positive(expr), assumptions)
         if _positive:
@@ -86,6 +92,10 @@ class AskCompositeHandler(CommonHandler):
                 _prime = ask(Q.prime(expr), assumptions)
                 if _prime is None:
                     return
+                # Positive integer which is not prime is not
+                # necessarily composite
+                if expr.equals(1):
+                    return False
                 return not _prime
             else:
                 return _integer
@@ -96,6 +106,10 @@ class AskCompositeHandler(CommonHandler):
 class AskEvenHandler(CommonHandler):
 
     @staticmethod
+    def Expr(expr, assumptions):
+        return expr.is_even
+
+    @staticmethod
     def _number(expr, assumptions):
         # helper method
         try:
@@ -103,6 +117,8 @@ class AskEvenHandler(CommonHandler):
             if not (expr - i).equals(0):
                 raise TypeError
         except TypeError:
+            return False
+        if isinstance(expr, (float, Float)):
             return False
         return i % 2 == 0
 
@@ -114,14 +130,17 @@ class AskEvenHandler(CommonHandler):
     @staticmethod
     def Mul(expr, assumptions):
         """
-        Even * Integer -> Even
-        Even * Odd     -> Even
-        Integer * Odd  -> ?
-        Odd * Odd      -> Odd
+        Even * Integer    -> Even
+        Even * Odd        -> Even
+        Integer * Odd     -> ?
+        Odd * Odd         -> Odd
+        Even * Even       -> Even
+        Integer * Integer -> Even if Integer + Integer = Odd
+                          -> ? otherwise
         """
         if expr.is_number:
             return AskEvenHandler._number(expr, assumptions)
-        even, odd, irrational = False, 0, False
+        even, odd, irrational, acc = False, 0, False, 1
         for arg in expr.args:
             # check for all integers and at least one even
             if ask(Q.integer(arg), assumptions):
@@ -129,6 +148,9 @@ class AskEvenHandler(CommonHandler):
                     even = True
                 elif ask(Q.odd(arg), assumptions):
                     odd += 1
+                elif not even and acc != 1:
+                    if ask(Q.odd(acc + arg), assumptions):
+                        even = True
             elif ask(Q.irrational(arg), assumptions):
                 # one irrational makes the result False
                 # two makes it undefined
@@ -137,6 +159,7 @@ class AskEvenHandler(CommonHandler):
                 irrational = True
             else:
                 break
+            acc = arg
         else:
             if irrational:
                 return False
@@ -185,10 +208,6 @@ class AskEvenHandler(CommonHandler):
     Rational, Infinity, NegativeInfinity, ImaginaryUnit = [staticmethod(CommonHandler.AlwaysFalse)]*4
 
     @staticmethod
-    def Float(expr, assumptions):
-        return expr % 2 == 0
-
-    @staticmethod
     def NumberSymbol(expr, assumptions):
         return AskEvenHandler._number(expr, assumptions)
 
@@ -213,6 +232,10 @@ class AskOddHandler(CommonHandler):
     Handler for key 'odd'
     Test that an expression represents an odd number
     """
+
+    @staticmethod
+    def Expr(expr, assumptions):
+        return expr.is_odd
 
     @staticmethod
     def Basic(expr, assumptions):
